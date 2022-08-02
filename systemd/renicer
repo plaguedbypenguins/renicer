@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# simple shell script wrapper to launch and stop renicer.py
+
+pidFile=/run/renicer.pid
+
+if [ "$1" = "stop" ]; then
+   kill `cat $pidFile`
+   exit $?
+elif [ "$1" = "status" ]; then
+   pid=`cat $pidFile`
+   if [ "$pid" = "" ]; then
+      exit 1
+   fi
+   ps $pid
+   exit $?
+elif [ "$1" = "start" ]; then
+   #. /etc/profile.d/z00_lmod.sh
+   #. /etc/profile.d/z01-local.sh
+   #ml gcc/7.3.0 python/3.6.4 
+
+   /opt/root/renicer.py < /dev/null &
+   status=$?
+   pid=$!
+   echo $pid > $pidFile
+   exit $status
+else
+   exit 1
+fi

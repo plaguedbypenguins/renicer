@@ -1,0 +1,13 @@
+[Unit]
+Description=Renice long running login node processes
+# 
+#After=kinda_rc_local.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/root/renicer start
+ExecStop=/opt/root/renicer stop
+
+[Install]
+WantedBy=multi-user.target
