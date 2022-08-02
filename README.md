@@ -3,7 +3,9 @@
 This works together with [Splosh](https://github.com/plaguedbypenguins/splosh/) to automatically renice long running processes and threads on cluster login nodes.
 
 Run like
-   renicer.py < /dev/null &
+```
+renicer.py < /dev/null &
+```
 
 It requires python3, cgroups v1, and a cgroup hierachy setup by Splosh. eg. "/sys/fs/cgroup/cpuset/aardvark/<users>/"
 
