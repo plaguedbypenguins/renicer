@@ -20,12 +20,25 @@ base='/sys/fs/cgroup/cpuset/aardvark'
 #
 # these must be in order of longest time to shortest time:
 thresholds = [ (15, 720*60), (10, 180*60), (4, 60*60) ]
-
-# debug:
+# for quick debugging:
 #thresholds = [ (15, 720), (10, 180), (4, 60) ]
 
-niceMax=thresholds[0][0]
-minCputime=thresholds[-1][1]
+# similar to the above, we can also kill tasks if they exceed a time limit.
+# format is (signal, time in seconds) in a list.
+# eg. kill -9 after 1600mins, and kill -15 after 1440mins (1 day) would be
+#      [ (9, 1600*60), (15, 1440*60) ]
+#
+# these must be in order of longest time to shortest time:
+killthresholds = [ (9, 1600*60), (15, 1440*60) ]
+# for quick debugging:
+#killthresholds = [ (9, 1200), (15, 1000) ]
+
+# these users think they are special. don't touch their tasks. eg. [ 'hamster', 'bob' ]
+protectedUsers = []
+
+niceMax=thresholds[0][0]    # 15
+minCpuTime=thresholds[-1][1]    # 60*60
+minKillTime=killthresholds[-1][1]  # 2000*60
 
 def getLog(loglevel):
    log = logging.getLogger('renicer')
@@ -68,12 +81,12 @@ class taskstat:
       if self.tcomm == '(sshd)':  # skip user sshd's
          return False
 
-      self.nice=int(self.s[18])
-      if self.nice >= niceMax:   # already max nice
+      self.cpuTime()
+      if self.cputime < minCpuTime:
          return False
 
-      self.cpuTime()
-      if self.cputime < minCputime:
+      self.nice=int(self.s[18])
+      if self.nice >= niceMax and self.cputime < minKillTime:   # already max nice and not yet killable
          return False
 
       return True
@@ -120,13 +133,35 @@ class taskstat:
       if self.nice >= n:  # process is already too nice
          return
       log.info('user ' + self.user + ' cputime %.1f' % self.cputime + ' cpuused %.2f' % self.cpuused + ' intermittent %.2f' % self.intermittent + ' renice to %d' % n + '. ' + str(self.s))
-      os.setpriority(os.PRIO_PROCESS, int(self.pid), n)
+      try:
+         os.setpriority(os.PRIO_PROCESS, int(self.pid), n)
+      except:
+         log.info('user ' + self.user + ' cputime %.1f' % self.cputime + ' cpuused %.2f' % self.cpuused + ' intermittent %.2f' % self.intermittent + ' renice %d FAILED' % sig + '. ' + str(self.s))
+         # renice can fail 'cos a kill of a related or parent process may take out children before they can be reniced here
+         pass
+
+   def ioTask(self):
+      if self.tcomm in [ '(rsync)', '(sftp-server)', '(scp)' ]:  # skip data transfer daemons
+         return True
+      return False
+
+   def kill(self, sig):
+      log.info('user ' + self.user + ' cputime %.1f' % self.cputime + ' cpuused %.2f' % self.cpuused + ' intermittent %.2f' % self.intermittent + ' send kill %d' % sig + '. ' + str(self.s))
+      try:
+         os.kill(int(self.pid), sig)
+      except:
+         log.info('user ' + self.user + ' cputime %.1f' % self.cputime + ' cpuused %.2f' % self.cpuused + ' intermittent %.2f' % self.intermittent + ' send kill %d FAILED' % sig + '. ' + str(self.s))
+         # kill can fail 'cos a kill of a related or parent process may take out children before they can be killed here
+         pass
+
 
 while True:
    tasks=[]
    cnt = 0
    with os.scandir(base) as it:
       for entry in it:
+         if entry.name in protectedUsers:  # don't touch tasks from specific users (pseudo-daemons, sysadmins, ...)
+            continue
          if not entry.name.startswith('.') and entry.is_dir():
             with open(base + '/' + entry.name + '/tasks', 'r') as f:
                for l in f.readlines():
@@ -159,6 +194,16 @@ while True:
       for n, tm in thresholds:
          if t.cputime > tm:
             t.renice(n)
+            break
+
+      # don't kill i/o tasks
+      if t.ioTask():
+         continue
+
+      # decide on the kill level, depending on the hours of cpu it's used...
+      for sig, tm in killthresholds:
+         if t.cputime > tm:
+            t.kill(sig)
             break
 
    time.sleep(300)
